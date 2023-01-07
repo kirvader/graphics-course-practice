@@ -26,6 +26,71 @@ void glew_fail(std::string_view message, GLenum error)
     throw std::runtime_error(to_string(message) + reinterpret_cast<const char *>(glewGetErrorString(error)));
 }
 
+const char *fragment_shader_source = R"(#version 330 core
+layout (location = 0) out vec4 out_color;
+
+in vec3 color;
+int len = 16;
+
+void main() {
+    float x = floor(color.x * len);
+    float y = floor(color.y * len);
+    int overall = (int(x) + int(y)) % 2;
+    out_color = vec4(overall, overall, overall, 0.0);
+}
+)";
+
+// vertex shader
+const char *vertex_shader_source = R"(#version 330 core
+
+const vec2 VERTICES[3] = vec2[3](
+        vec2(-0.5, -0.5),
+        vec2(1.0, 0.0),
+        vec2(0.0, 1.0)
+);
+
+out vec3 color;
+
+void main() {
+    gl_Position = vec4(VERTICES[gl_VertexID], 0.0, 1.0);
+    color = vec3((gl_Position.x + 1) / 2, (gl_Position.y + 1) / 2, 0.0);
+})";
+
+GLuint createShader(GLenum shaderType, const char * shaderSource) {
+    auto shaderId = glCreateShader(shaderType);
+    glShaderSource(shaderId, 1, &shaderSource, nullptr);
+    glCompileShader(shaderId);
+    GLint isCompiled = 0;
+    glGetShaderiv(shaderId, GL_COMPILE_STATUS, &isCompiled);
+    if (isCompiled == GL_FALSE) {
+        GLsizei logLength;
+        glGetShaderiv(shaderId, GL_INFO_LOG_LENGTH, &logLength);
+        char msg[logLength];
+        glGetShaderInfoLog(shaderId, 512, &logLength, msg);
+        throw std::runtime_error(msg);
+    }
+    return shaderId;
+}
+
+GLuint createProgram(GLuint vertexShaderId, GLuint fragmentShaderId) {
+    GLuint programId = glCreateProgram();
+    glAttachShader(programId, vertexShaderId);
+    glAttachShader(programId, fragmentShaderId);
+
+    glLinkProgram(programId);
+    GLint linkedStatus = 0;
+    glGetProgramiv(programId, GL_LINK_STATUS, &linkedStatus);
+    if (linkedStatus == GL_FALSE) {
+        GLsizei logLength = 0;
+        glGetProgramiv(programId, GL_INFO_LOG_LENGTH, &logLength);
+        char msg[logLength];
+        glGetProgramInfoLog(programId, 512, &logLength, msg);
+        throw std::runtime_error(msg);
+    }
+    return programId;
+
+}
+
 int main() try
 {
     if (SDL_Init(SDL_INIT_VIDEO) != 0)
@@ -55,6 +120,14 @@ int main() try
     if (!GLEW_VERSION_3_3)
         throw std::runtime_error("OpenGL 3.3 is not supported");
 
+    GLuint fragmentShaderId = createShader(GL_FRAGMENT_SHADER, fragment_shader_source);
+    GLuint vertexShaderId = createShader(GL_VERTEX_SHADER, vertex_shader_source);
+
+    GLuint programId = createProgram(vertexShaderId, fragmentShaderId);
+
+    GLuint VAO;
+    glGenVertexArrays(1, &VAO);
+
     glClearColor(0.8f, 0.8f, 1.f, 0.f);
 
     bool running = true;
@@ -71,6 +144,10 @@ int main() try
             break;
 
         glClear(GL_COLOR_BUFFER_BIT);
+
+        glUseProgram(programId);
+        glBindVertexArray(VAO);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
 
         SDL_GL_SwapWindow(window);
     }
