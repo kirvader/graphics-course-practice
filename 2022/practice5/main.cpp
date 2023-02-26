@@ -41,28 +41,35 @@ uniform mat4 projection;
 
 layout (location = 0) in vec3 in_position;
 layout (location = 1) in vec3 in_normal;
+layout (location = 2) in vec2 in_texcoord;
 
 out vec3 normal;
+out vec2 texcoord;
 
 void main()
 {
     gl_Position = projection * transform * vec4(in_position, 1.0);
     normal = mat3(transform) * in_normal;
+    texcoord = in_texcoord;
 }
 )";
 
 const char fragment_shader_source[] =
 R"(#version 330 core
 
+uniform sampler2D texture_sampler;
+uniform float time;
+
 in vec3 normal;
+in vec2 texcoord;
 
 layout (location = 0) out vec4 out_color;
 
 void main()
 {
     float lightness = 0.5 + 0.5 * dot(normalize(normal), normalize(vec3(1.0, 2.0, 3.0)));
-    vec3 albedo = vec3(1.0);
-    out_color = vec4(lightness * albedo, 1.0);
+    vec4 albedo = texture(texture_sampler, texcoord + vec2(time, time));
+    out_color = vec4(lightness * albedo.xyz, albedo.w);
 }
 )";
 
@@ -104,6 +111,10 @@ GLuint create_program(GLuint vertex_shader, GLuint fragment_shader)
 
     return result;
 }
+
+struct color_data {
+    GLubyte data[4];
+};
 
 int main() try
 {
@@ -149,8 +160,10 @@ int main() try
     auto fragment_shader = create_shader(GL_FRAGMENT_SHADER, fragment_shader_source);
     auto program = create_program(vertex_shader, fragment_shader);
 
-    GLuint transform_location = glGetUniformLocation(program, "transform");
-    GLuint projection_location = glGetUniformLocation(program, "projection");
+    GLint transform_location = glGetUniformLocation(program, "transform");
+    GLint projection_location = glGetUniformLocation(program, "projection");
+    GLint sampler2D_location = glGetUniformLocation(program, "texture_sampler");
+    GLint time_location = glGetUniformLocation(program, "time");
 
     std::string project_root = PROJECT_ROOT;
     std::string cow_texture_path = project_root + "/cow.png";
@@ -164,6 +177,90 @@ int main() try
     float offset_z = -2.f;
 
     std::map<SDL_Keycode, bool> button_down;
+
+    GLuint vao, vbo, ebo;
+    glGenVertexArrays(1, &vao);
+    glBindVertexArray(vao);
+
+    glGenBuffers(1, &vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(obj_data::vertex), (void *) 0);
+
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(obj_data::vertex), (void *) (3 * sizeof(float)));
+
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(obj_data::vertex), (void *) (2 * 3 * sizeof(float)));
+
+    glBufferData(GL_ARRAY_BUFFER, cow.vertices.size() * sizeof(obj_data::vertex), cow.vertices.data(), GL_STATIC_DRAW);
+
+    glGenBuffers(1, &ebo);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, cow.indices.size() * sizeof(std::uint32_t), cow.indices.data(), GL_STATIC_DRAW);
+
+//    GLuint texture_id;
+//    glGenTextures(1, &texture_id);
+//
+//    glActiveTexture(GL_TEXTURE0);
+//    glBindTexture(GL_TEXTURE_2D, texture_id);
+//
+//    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+//    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
+//
+//    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+//    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+//
+//    GLuint texture_side_size = 1024;
+//    std::vector<uint32_t> texture_data(texture_side_size * texture_side_size);
+//    for (int i = 0; i < texture_side_size; i++) {
+//        for (int j = 0; j < texture_side_size; j++) {
+//            if ((i + j) % 2 == 0) {
+//                texture_data[i * texture_side_size + j] = 0xFF000000u;
+//            } else {
+//                texture_data[i * texture_side_size + j] = 0xFFFFFFFFu;
+//            }
+//        }
+//    }
+//
+//    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, texture_side_size, texture_side_size, 0, GL_RGBA, GL_UNSIGNED_BYTE, texture_data.data());
+//
+//    glGenerateMipmap(GL_TEXTURE_2D);
+//
+//    std::vector<uint32_t> fst_mipmap_level(texture_side_size * texture_side_size / 4, 0xFFFFFF00u);
+//    glTexImage2D(GL_TEXTURE_2D, 1, GL_RGBA8, texture_side_size / 2, texture_side_size / 2, 0, GL_RGBA, GL_UNSIGNED_BYTE, fst_mipmap_level.data());
+//
+//    std::vector<uint32_t> snd_mipmap_level(texture_side_size * texture_side_size / 16, 0xFF00FF00u);
+//    glTexImage2D(GL_TEXTURE_2D, 2, GL_RGBA8, texture_side_size / 4, texture_side_size / 4, 0, GL_RGBA, GL_UNSIGNED_BYTE, snd_mipmap_level.data());
+//
+//    std::vector<uint32_t> thrd_mipmap_level(texture_side_size * texture_side_size / 16, 0xFF0000FFu);
+//    glTexImage2D(GL_TEXTURE_2D, 3, GL_RGBA8, texture_side_size / 8, texture_side_size / 8, 0, GL_RGBA, GL_UNSIGNED_BYTE, thrd_mipmap_level.data());
+
+    GLuint cow_texture_id;
+    glGenTextures(1, &cow_texture_id);
+
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, cow_texture_id);
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+
+    int cow_texture_width;
+    int cow_texture_height;
+    int cow_comp;
+    stbi_uc *cow_pixels = stbi_load(cow_texture_path.data(), &cow_texture_width, &cow_texture_height, &cow_comp, 4);
+
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, cow_texture_width, cow_texture_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, cow_pixels);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    stbi_image_free(cow_pixels);
+
+    glUseProgram(program);
+    glUniform1i(sampler2D_location, 1);
+
+
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_CULL_FACE);
 
     bool running = true;
     while (running)
@@ -204,7 +301,6 @@ int main() try
         if (button_down[SDLK_RIGHT]) angle_y -= 4.f * dt;
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        glEnable(GL_DEPTH_TEST);
 
         float near = 0.1f;
         float far = 100.f;
@@ -227,9 +323,12 @@ int main() try
             0.f, 0.f, -1.f, 0.f,
         };
 
-        glUseProgram(program);
         glUniformMatrix4fv(transform_location, 1, GL_TRUE, transform);
         glUniformMatrix4fv(projection_location, 1, GL_TRUE, projection);
+        glUniform1f(time_location, time * 0.2);
+
+
+        glDrawElements(GL_TRIANGLES, cow.indices.size(), GL_UNSIGNED_INT, nullptr);
 
         SDL_GL_SwapWindow(window);
     }
